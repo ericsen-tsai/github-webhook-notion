@@ -11,20 +11,24 @@
     "test-webhook-opened": "node mock-webhook.js opened",
     "test-webhook-edited": "node mock-webhook.js edited",
     "test-webhook-closed": "node mock-webhook.js closed",
+    "deploy": "gcloud run deploy github-webhook-notion --source . --platform managed --allow-unauthenticated --set-secrets NOTION_API_KEY=notion-api-key:latest --region=asia-east1",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [
     "github",
     "webhook",
     "notion",
-    "integration"
+    "integration",
+    "cloud-run",
+    "google-cloud"
   ],
   "author": "",
   "license": "ISC",
   "packageManager": "pnpm@10.12.4",
   "dependencies": {
-    "express": "^5.1.0",
     "@notionhq/client": "^5.1.0",
-    "axios": "^1.6.0"
+    "axios": "^1.6.0",
+    "dotenv": "^17.2.2",
+    "express": "^5.1.0"
   }
 }

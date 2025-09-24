@@ -1,6 +1,6 @@
 # GitHub Webhook to Notion Integration
 
-This project creates a webhook server that listens for GitHub pull request events and automatically adds mentions to a specific Notion page when the PR description contains a link to that page.
+This project creates a webhook server that listens for GitHub pull request events and automatically adds mentions to a specific Notion page when the PR description contains a link to that page. The application is designed to run on **Google Cloud Run** for scalable, serverless deployment.
 
 ## Features
 
@@ -22,17 +22,26 @@ This project creates a webhook server that listens for GitHub pull request event
 
 ## Setup
 
+### Prerequisites
+
+- Node.js 18+
+- Google Cloud SDK (for deployment)
+- Notion API key
+- GitHub repository with webhook access
+
+### Local Development
+
 1. Install dependencies:
 
    ```bash
    pnpm install
    ```
 
-2. Make sure your Notion API key and page ID are correctly set in `index.js`:
+2. Set up environment variables:
 
-   ```javascript
-   const NOTION_API_KEY = "your-notion-api-key";
-   const NOTION_PAGE_ID = "27667dbd2dd481369bb2f99787991781";
+   ```bash
+   export NOTION_API_KEY="your-notion-api-key"
+   export PORT=8080
    ```
 
 3. Start the webhook server:
@@ -41,7 +50,53 @@ This project creates a webhook server that listens for GitHub pull request event
    pnpm start
    ```
 
-The server will run on `http://localhost:3000` by default.
+The server will run on `http://localhost:8080` by default.
+
+### Google Cloud Run Deployment
+
+1. **Install Google Cloud SDK** (if not already installed):
+
+   ```bash
+   # macOS
+   brew install google-cloud-sdk
+   
+   # Or download from: https://cloud.google.com/sdk/docs/install
+   ```
+
+2. **Authenticate with Google Cloud**:
+
+   ```bash
+   gcloud auth login
+   gcloud config set project YOUR_PROJECT_ID
+   ```
+
+3. **Set environment variables in Cloud Run**:
+
+   ```bash
+   gcloud run deploy github-webhook-notion \
+     --source . \
+     --platform managed \
+     --region us-central1 \
+     --allow-unauthenticated \
+     --set-env-vars NOTION_API_KEY=your-notion-api-key
+   ```
+
+4. **Deploy using npm script** (alternative):
+
+   ```bash
+   pnpm run deploy
+   ```
+
+5. **Get your Cloud Run URL**:
+
+   ```bash
+   gcloud run services describe github-webhook-notion \
+     --platform managed \
+     --region us-central1 \
+     --format 'value(status.url)'
+   ```
+
+Your webhook will be available at: `https://your-service-url.run.app/webhook`
 
 ## Endpoints
 
@@ -81,9 +136,24 @@ To use this with a real GitHub repository:
 1. Go to your GitHub repository settings
 2. Navigate to Webhooks
 3. Add a new webhook with:
-   - Payload URL: `https://your-domain.com/webhook`
-   - Content type: `application/json`
-   - Events: Select "Pull requests"
+   - **Payload URL**: `https://your-service-url.run.app/webhook` (your Cloud Run URL)
+   - **Content type**: `application/json`
+   - **Events**: Select "Pull requests"
+   - **Secret**: (optional) Add a webhook secret for additional security
+
+### Webhook Security (Recommended)
+
+For production deployments, consider adding webhook signature verification:
+
+1. Set a webhook secret in GitHub
+2. Add the secret to your Cloud Run environment variables:
+
+   ```bash
+   gcloud run services update github-webhook-notion \
+     --set-env-vars GITHUB_WEBHOOK_SECRET=your-webhook-secret
+   ```
+
+3. The application will verify webhook signatures automatically
 
 ## How it Works
 
@@ -151,8 +221,52 @@ This endpoint returns:
 
 ## Environment Variables
 
-You can override the default port using:
+### Local Development
 
 ```bash
-PORT=8080 pnpm start
+export NOTION_API_KEY="your-notion-api-key"
+export PORT=8080
+export GITHUB_WEBHOOK_SECRET="your-webhook-secret"  # optional
 ```
+
+### Cloud Run Deployment
+
+Set environment variables using the Google Cloud Console or CLI:
+
+```bash
+gcloud run services update github-webhook-notion \
+  --set-env-vars NOTION_API_KEY=your-notion-api-key,GITHUB_WEBHOOK_SECRET=your-webhook-secret
+```
+
+### Required Environment Variables
+
+- `NOTION_API_KEY`: Your Notion integration API key
+- `PORT`: Server port (defaults to 8080, automatically set by Cloud Run)
+
+### Optional Environment Variables
+
+- `GITHUB_WEBHOOK_SECRET`: Webhook secret for signature verification
+
+## Monitoring and Logs
+
+### Cloud Run Logs
+
+View your application logs:
+
+```bash
+gcloud logs read --service=github-webhook-notion --limit=50
+```
+
+### Health Monitoring
+
+The application provides a health check endpoint:
+
+- **Local**: `http://localhost:8080/health`
+- **Cloud Run**: `https://your-service-url.run.app/health`
+
+## Related Resources
+
+- [RELATED_PAGES.md](./RELATED_PAGES.md) - Additional documentation and resources
+- [Google Cloud Run Documentation](https://cloud.google.com/run/docs)
+- [Notion API Documentation](https://developers.notion.com/)
+- [GitHub Webhooks Documentation](https://docs.github.com/en/developers/webhooks-and-events/webhooks)

@@ -1,17 +1,22 @@
-import express from "express";
+// Cloud Run Function entry point
+
 import { Client } from "@notionhq/client";
+import { configDotenv } from "dotenv";
+import express from "express";
 
-const NOTION_API_KEY = process.env.NOTION_API_KEY;
-// NOTION_PAGE_ID will be extracted from the PR description dynamically
+configDotenv();
 
-// Initialize Notion client
-const notion = new Client({ auth: NOTION_API_KEY });
+const NOTION_STATUS_MAPPING = {
+  "kids-reporter": ["Todo", "In progress", "Code Review", "Ready For Test"],
+  twreporter: ["Todo", "In progress", "Code Review", "Ready For Test"],
+};
 
-// Initialize Express app
+// Initialize Notion client and Express app
+const notion = new Client({ auth: process.env.NOTION_API_KEY });
 const app = express();
-const PORT = process.env.PORT || 3000;
+const port = process.env.PORT || 8080;
 
-// Middleware to parse JSON
+// Middleware
 app.use(express.json());
 
 // Function to extract Notion page ID from PR description
@@ -55,131 +60,27 @@ function extractNotionPageId(prDescription) {
   return null;
 }
 
-// Function to get all available status options
-async function getAvailableStatuses(pageId) {
+// Function to update page status to next status
+async function updatePageStatus(pageId, repoName, prState) {
   try {
-    const pageInfo = await notion.pages.retrieve({
-      page_id: pageId,
-    });
+    const availableStatuses = NOTION_STATUS_MAPPING[repoName];
 
-    // Check if page is part of a database
-    if (pageInfo.parent?.type === "database_id") {
-      // Fetch database schema to get status options
-      const databaseInfo = await notion.databases.retrieve({
-        database_id: pageInfo.parent.database_id,
-      });
-
-      const statusProperty =
-        databaseInfo.properties?.Status || databaseInfo.properties?.status;
-
-      if (statusProperty) {
-        if (statusProperty.type === "status") {
-          return {
-            type: "status",
-            options: statusProperty.status.options.map((option) => ({
-              id: option.id,
-              name: option.name,
-              color: option.color,
-            })),
-          };
-        } else if (statusProperty.type === "select") {
-          return {
-            type: "select",
-            options: statusProperty.select.options.map((option) => ({
-              id: option.id,
-              name: option.name,
-              color: option.color,
-            })),
-          };
-        }
-      }
+    let accessIndex = 0;
+    if (prState === "closed") {
+      accessIndex = availableStatuses.length - 1;
     } else {
-      // For standalone pages, we can't get predefined options
-      // Return common status options as fallback
-      console.log("Standalone page detected - using common status options");
-      return {
-        type: "unknown",
-        options: [
-          { name: "Not started", color: "default" },
-          { name: "In progress", color: "blue" },
-          { name: "Done", color: "green" },
-          { name: "Complete", color: "green" },
-        ],
-      };
+      accessIndex = availableStatuses.length - 2;
     }
 
-    return { type: "none", options: [] };
-  } catch (error) {
-    console.error("Error getting available statuses:", error);
-    return { type: "error", options: [] };
-  }
-}
-
-// Function to get the current page status
-async function getPageStatus(pageId) {
-  try {
-    const pageInfo = await notion.pages.retrieve({
-      page_id: pageId,
-    });
-
-    // Look for a Status property (common in Notion databases)
-    const statusProperty =
-      pageInfo.properties?.Status || pageInfo.properties?.status;
-
-    if (statusProperty) {
-      if (statusProperty.type === "status") {
-        return statusProperty.status?.name || null;
-      } else if (statusProperty.type === "select") {
-        return statusProperty.select?.name || null;
-      }
-    }
-
-    return null;
-  } catch (error) {
-    console.error("Error getting page status:", error);
-    return null;
-  }
-}
-
-// Function to update page status to completed
-async function updatePageStatusToComplete(pageId) {
-  try {
-    // Get available status options to find the best completion status
-    const availableStatuses = await getAvailableStatuses(pageId);
-
-    let completionStatusName = "Done"; // Default fallback
-
-    // Look for common completion status names
-    const completionNames = [
-      "Done",
-      "Complete",
-      "Completed",
-      "Finished",
-      "Closed",
-    ];
-
-    if (availableStatuses.options && availableStatuses.options.length > 0) {
-      const foundStatus = availableStatuses.options.find((option) =>
-        completionNames.some((name) =>
-          option.name.toLowerCase().includes(name.toLowerCase())
-        )
-      );
-
-      if (foundStatus) {
-        completionStatusName = foundStatus.name;
-        console.log(`Found completion status: ${completionStatusName}`);
-      } else {
-        console.log("No standard completion status found, using default: Done");
-      }
-    }
+    const nextStatusName = availableStatuses[accessIndex];
 
     const pageInfo = await notion.pages.retrieve({
       page_id: pageId,
     });
-
     // Find the status property
     const statusProperty =
-      pageInfo.properties?.Status || pageInfo.properties?.status;
+      pageInfo.properties?.["Completed?"] ||
+      pageInfo.properties?.["completed?"];
 
     if (!statusProperty) {
       console.log("No status property found on the page");
@@ -190,17 +91,17 @@ async function updatePageStatusToComplete(pageId) {
     let propertyName = "Status"; // Default, but we'll find the actual name
 
     // Find the correct property name (could be "Status" or "status")
-    if (pageInfo.properties?.Status) {
-      propertyName = "Status";
-    } else if (pageInfo.properties?.status) {
-      propertyName = "status";
+    if (pageInfo.properties?.["Completed?"]) {
+      propertyName = "Completed?";
+    } else if (pageInfo.properties?.["completed?"]) {
+      propertyName = "completed?";
     }
 
     if (statusProperty.type === "status") {
       updatePayload = {
         [propertyName]: {
           status: {
-            name: completionStatusName,
+            name: nextStatusName,
           },
         },
       };
@@ -208,7 +109,7 @@ async function updatePageStatusToComplete(pageId) {
       updatePayload = {
         [propertyName]: {
           select: {
-            name: completionStatusName,
+            name: nextStatusName,
           },
         },
       };
@@ -224,8 +125,8 @@ async function updatePageStatusToComplete(pageId) {
       properties: updatePayload,
     });
 
-    console.log(`Successfully updated page status to ${completionStatusName}`);
-    return { updated: true, statusName: completionStatusName };
+    console.log(`Successfully updated page status to ${nextStatusName}`);
+    return { updated: true, statusName: nextStatusName };
   } catch (error) {
     console.error("Error updating page status:", error);
     throw error;
@@ -316,7 +217,14 @@ async function addMentionBlock(pullRequest, pageId) {
               },
               {
                 type: "text",
-                text: { content: ` by ${pullRequest.user.login}` },
+                text: { content: ` by ` },
+              },
+              {
+                type: "text",
+                text: {
+                  content: `${pullRequest.user.login}`,
+                  link: { url: pullRequest.user.html_url },
+                },
               },
             ],
           },
@@ -332,149 +240,128 @@ async function addMentionBlock(pullRequest, pageId) {
   }
 }
 
-// GitHub webhook endpoint
+// Express routes
 app.post("/webhook", async (req, res) => {
   try {
     const { action, pull_request } = req.body;
-    // Process different PR actions
-    if (pull_request) {
-      console.log(
-        `Processing PR #${pull_request.number} (${action}): ${pull_request.title}`
-      );
 
-      // Extract Notion page ID from PR description
-      const notionPageId = extractNotionPageId(pull_request.body);
-
-      if (!notionPageId) {
-        console.log("No Notion page found in PR description, skipping");
-        res.status(200).json({
-          message: "No Notion page found in PR description",
-          pr_number: pull_request.number,
-          action: action,
-          skipped: true,
-        });
-        return;
-      }
-
-      console.log(`Found Notion page ID: ${notionPageId}`);
-
-      // Get current page status and available options
-      const currentStatus = await getPageStatus(notionPageId);
-      const availableStatuses = await getAvailableStatuses(notionPageId);
-      console.log(`Current page status: ${currentStatus || "None"}`);
-      console.log(
-        `Available statuses: ${availableStatuses.options
-          .map((o) => o.name)
-          .join(", ")}`
-      );
-
-      let result = {};
-      let statusResult = {};
-
-      switch (action) {
-        case "opened":
-          // Only mention PR for opened events
-          result = await addMentionBlock(pull_request, notionPageId);
-          break;
-
-        case "edited":
-          // Mention PR if it's not already in the card
-          result = await addMentionBlock(pull_request, notionPageId);
-          break;
-
-        case "closed":
-          // Transition page to complete status
-          console.log("PR closed/merged - updating page status to Complete");
-          statusResult = await updatePageStatusToComplete(notionPageId);
-
-          // Also add PR mention if not already present
-          result = await addMentionBlock(pull_request, notionPageId);
-          break;
-
-        default:
-          console.log(`Ignoring PR action: ${action}`);
-          res.status(200).json({
-            message: `Event ignored (action: ${action})`,
-            pr_number: pull_request.number,
-            action: action,
-          });
-          return;
-      }
-
-      // Prepare response based on actions taken
-      const response = {
-        message: `Successfully processed PR ${action} event`,
-        pr_number: pull_request.number,
-        action: action,
-        notion_page_id: notionPageId,
-        current_status: currentStatus,
-        available_statuses: availableStatuses.options.map((o) => o.name),
-      };
-
-      if (result.alreadyExists) {
-        response.pr_mention = "already_exists";
-      } else if (result.added) {
-        response.pr_mention = "added";
-      }
-
-      if (statusResult.updated) {
-        response.status_updated = statusResult.statusName || "complete";
-      } else if (statusResult.reason) {
-        response.status_update_failed = statusResult.reason;
-      }
-
-      res.status(200).json(response);
-    } else {
-      res.status(200).json({
+    if (!pull_request) {
+      return res.status(200).json({
         message: "Event ignored (not a pull request event)",
         action: action || "unknown",
       });
     }
+
+    console.log(
+      `Processing PR #${pull_request.number} (${action}): ${pull_request.title}`
+    );
+
+    const notionPageId = extractNotionPageId(pull_request.body);
+
+    if (!notionPageId) {
+      console.log("No Notion page found in PR description, skipping");
+      return res.status(200).json({
+        message: "No Notion page found in PR description",
+        pr_number: pull_request.number,
+        action: action,
+        skipped: true,
+      });
+    }
+
+    console.log(`Found Notion page ID: ${notionPageId}`);
+
+    let result = {};
+    let statusResult = {};
+    const repoName = pull_request.url.includes("kids-reporter")
+      ? "kids-reporter"
+      : "twreporter";
+
+    switch (action) {
+      case "opened":
+        result = await addMentionBlock(pull_request, notionPageId);
+        statusResult = await updatePageStatus(
+          notionPageId,
+          repoName,
+          pull_request.state
+        );
+        break;
+      case "edited":
+        result = await addMentionBlock(pull_request, notionPageId);
+        // Only update status if PR is not closed (merged)
+        if (pull_request.state !== "closed") {
+          statusResult = await updatePageStatus(
+            notionPageId,
+            repoName,
+            pull_request.state
+          );
+        } else {
+          console.log(
+            "PR is closed - skipping status update for edited action"
+          );
+          statusResult = {
+            updated: false,
+            reason: "PR is closed, status update skipped",
+          };
+        }
+        break;
+      case "closed":
+        console.log("PR closed/merged - updating page status to Complete");
+        statusResult = await updatePageStatus(
+          notionPageId,
+          repoName,
+          pull_request.state
+        );
+        result = await addMentionBlock(pull_request, notionPageId);
+        break;
+      default:
+        console.log(`Ignoring PR action: ${action}`);
+        return res.status(200).json({
+          message: `Event ignored (action: ${action})`,
+          pr_number: pull_request.number,
+          action: action,
+        });
+    }
+
+    const response = {
+      message: `Successfully processed PR ${action} event`,
+      pr_number: pull_request.number,
+      action: action,
+      notion_page_id: notionPageId,
+    };
+
+    if (result.alreadyExists) {
+      response.pr_mention = "already_exists";
+    } else if (result.added) {
+      response.pr_mention = "added";
+    }
+
+    if (statusResult.updated) {
+      response.status_updated = statusResult.statusName || "complete";
+    } else if (statusResult.reason) {
+      response.status_update_failed = statusResult.reason;
+    }
+
+    res.status(200).json(response);
   } catch (error) {
     console.error("Webhook processing error:", error);
     res.status(500).json({ error: "Internal server error" });
   }
 });
 
-// Status information endpoint
-app.get("/status-info/:pageId", async (req, res) => {
-  try {
-    const { pageId } = req.params;
-
-    if (!pageId) {
-      res.status(400).json({ error: "Page ID is required" });
-      return;
-    }
-
-    const currentStatus = await getPageStatus(pageId);
-    const availableStatuses = await getAvailableStatuses(pageId);
-
-    res.status(200).json({
-      page_id: pageId,
-      current_status: currentStatus,
-      available_statuses: availableStatuses,
-      timestamp: new Date().toISOString(),
-    });
-  } catch (error) {
-    console.error("Error fetching status info:", error);
-    res.status(500).json({ error: "Failed to fetch status information" });
-  }
-});
-
-// Health check endpoint
-app.get("/health", (req, res) => {
-  res.status(200).json({ status: "OK", timestamp: new Date().toISOString() });
+app.get("/health", (_, res) => {
+  const responseBody = {
+    status: "OK",
+    timestamp: new Date().toISOString(),
+  };
+  res.status(200).json(responseBody);
 });
 
 // Start the server
-app.listen(PORT, () => {
-  console.log(`GitHub webhook server listening on port ${PORT}`);
-  console.log(`Webhook endpoint: http://localhost:${PORT}/webhook`);
-  console.log(`Health check: http://localhost:${PORT}/health`);
-  console.log(`Status info: http://localhost:${PORT}/status-info/{pageId}`);
-  console.log(
-    `Note: Notion page ID will be extracted from PR descriptions dynamically`
-  );
+app.listen(port, () => {
+  console.log(`GitHub Webhook to Notion server running on port ${port}`);
+  console.log(`Health check: http://localhost:${port}/health`);
+  console.log(`Webhook endpoint: http://localhost:${port}/webhook`);
 });
 
+// Export for Cloud Run
 export default app;
