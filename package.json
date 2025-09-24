@@ -1,0 +1,30 @@
+{
+  "name": "github-webhook-notion",
+  "version": "1.0.0",
+  "description": "GitHub webhook integration with Notion",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node index.js",
+    "test-webhook": "node mock-webhook.js",
+    "test-webhook-opened": "node mock-webhook.js opened",
+    "test-webhook-edited": "node mock-webhook.js edited",
+    "test-webhook-closed": "node mock-webhook.js closed",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "github",
+    "webhook",
+    "notion",
+    "integration"
+  ],
+  "author": "",
+  "license": "ISC",
+  "packageManager": "pnpm@10.12.4",
+  "dependencies": {
+    "express": "^5.1.0",
+    "@notionhq/client": "^5.1.0",
+    "axios": "^1.6.0"
+  }
+}
