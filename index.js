@@ -276,12 +276,24 @@ app.post("/webhook", async (req, res) => {
 
     console.log(`Found Notion page IDs: ${notionPageIds.join(", ")}`);
 
-    let result = {};
-    let statusResult = {};
+    if (action !== "opened" && action !== "edited" && action !== "closed") {
+      console.log(`Ignoring PR action: ${action}`);
+      return res.status(200).json({
+        message: `Event ignored (action: ${action})`,
+        pr_number: pull_request.number,
+        action: action,
+      });
+    }
+
     const repoName = pull_request.url.includes("kids-reporter")
       ? "kids-reporter"
       : "twreporter";
-    notionPageIds.forEach(async (notionPageId) => {
+
+    // Process all page IDs in parallel
+    const processPagePromises = notionPageIds.map(async (notionPageId) => {
+      let result = {};
+      let statusResult = {};
+
       switch (action) {
         case "opened":
           result = await addMentionBlock(pull_request, notionPageId);
@@ -319,15 +331,18 @@ app.post("/webhook", async (req, res) => {
           );
           result = await addMentionBlock(pull_request, notionPageId);
           break;
-        default:
-          console.log(`Ignoring PR action: ${action}`);
-          return res.status(200).json({
-            message: `Event ignored (action: ${action})`,
-            pr_number: pull_request.number,
-            action: action,
-          });
       }
+
+      return { result, statusResult };
     });
+
+    const pageResults = await Promise.all(processPagePromises);
+
+    // Use the last result (maintaining similar behavior to sequential loop)
+    const { result, statusResult } = pageResults[pageResults.length - 1] || {
+      result: {},
+      statusResult: {},
+    };
 
     const response = {
       message: `Successfully processed PR ${action} event`,
