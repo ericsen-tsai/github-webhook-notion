@@ -11,7 +11,7 @@
     "test-webhook-opened": "node mock-webhook.js opened",
     "test-webhook-edited": "node mock-webhook.js edited",
     "test-webhook-closed": "node mock-webhook.js closed",
-    "deploy": "gcloud run deploy github-webhook-notion --source . --platform managed --allow-unauthenticated --set-secrets NOTION_API_KEY=notion-api-key:latest --region=asia-east1",
+    "deploy:cloudrun": "gcloud run deploy github-webhook-notion --source . --platform managed --allow-unauthenticated --set-secrets NOTION_API_KEY=notion-api-key:latest --region=asia-east1",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [

@@ -20,44 +20,48 @@ const port = process.env.PORT || 8080;
 app.use(express.json());
 
 // Function to extract Notion page ID from PR description
-function extractNotionPageId(prDescription) {
+function extractNotionPageIds(prDescription) {
   if (!prDescription) {
-    return null;
+    return [];
   }
 
-  // Regex patterns to match various Notion URL formats
+  // Regex patterns to match various Notion URL formats (global flag required for matchAll)
   const notionUrlPatterns = [
     // Standard Notion URLs: https://www.notion.so/workspace/page-title-pageId
-    /https:\/\/(?:www\.)?notion\.so\/[^\/\s]+\/[^\/\s]+-([a-f0-9]{32})/i,
+    /https:\/\/(?:www\.)?notion\.so\/[^\/\s]+\/[^\/\s]+-([a-f0-9]{32})/gi,
     // Direct page URLs: https://www.notion.so/pageId
-    /https:\/\/(?:www\.)?notion\.so\/([a-f0-9]{32})/i,
+    /https:\/\/(?:www\.)?notion\.so\/([a-f0-9]{32})(?:[\s?#]|$)/gi,
     // URLs with query parameters: https://www.notion.so/workspace/page-title-pageId?param=value
-    /https:\/\/(?:www\.)?notion\.so\/[^\/\s]+\/[^\/\s]+-([a-f0-9]{32})\?/i,
+    /https:\/\/(?:www\.)?notion\.so\/[^\/\s]+\/[^\/\s]+-([a-f0-9]{32})\?/gi,
     // Markdown link format: [text](https://www.notion.so/...)
-    /\[([^\]]+)\]\(https:\/\/(?:www\.)?notion\.so\/[^\/\s]+\/[^\/\s]+-([a-f0-9]{32})[^)]*\)/i,
-    // Raw URLs in various formats
-    /https:\/\/(?:www\.)?notion\.so\/[^\/\s]*\/[^\/\s]*-?([a-f0-9]{32})/i,
+    /\[[^\]]+\]\(https:\/\/(?:www\.)?notion\.so\/[^\/\s]+\/[^\/\s]+-([a-f0-9]{32})[^)]*\)/gi,
   ];
 
+  const pageIds = new Set();
+
   for (const pattern of notionUrlPatterns) {
-    const match = prDescription.match(pattern);
-    if (match) {
-      // The page ID is usually in the last capture group
-      const pageId = match[match.length - 1];
-      if (pageId && pageId.length === 32) {
+    for (const match of prDescription.matchAll(pattern)) {
+      const pageId = match[1];
+      if (pageId?.length === 32) {
         // Format the page ID with dashes in the standard UUID format
         const formattedPageId = pageId.replace(
           /(.{8})(.{4})(.{4})(.{4})(.{12})/,
           "$1-$2-$3-$4-$5"
         );
-        console.log(`Extracted Notion page ID: ${formattedPageId}`);
-        return formattedPageId;
+        pageIds.add(formattedPageId);
       }
     }
   }
 
-  console.log("No Notion page ID found in PR description");
-  return null;
+  const result = Array.from(pageIds);
+
+  if (result.length > 0) {
+    console.log(`Extracted ${result.length} Notion page ID(s):`, result);
+  } else {
+    console.log("No Notion page ID found in PR description");
+  }
+
+  return result;
 }
 
 // Function to update page status to next status
@@ -256,9 +260,9 @@ app.post("/webhook", async (req, res) => {
       `Processing PR #${pull_request.number} (${action}): ${pull_request.title}`
     );
 
-    const notionPageId = extractNotionPageId(pull_request.body);
+    const notionPageIds = extractNotionPageIds(pull_request.body);
 
-    if (!notionPageId) {
+    if (!notionPageIds.length) {
       console.log("No Notion page found in PR description, skipping");
       return res.status(200).json({
         message: "No Notion page found in PR description",
@@ -268,65 +272,66 @@ app.post("/webhook", async (req, res) => {
       });
     }
 
-    console.log(`Found Notion page ID: ${notionPageId}`);
+    console.log(`Found Notion page IDs: ${notionPageIds.join(", ")}`);
 
     let result = {};
     let statusResult = {};
     const repoName = pull_request.url.includes("kids-reporter")
       ? "kids-reporter"
       : "twreporter";
-
-    switch (action) {
-      case "opened":
-        result = await addMentionBlock(pull_request, notionPageId);
-        statusResult = await updatePageStatus(
-          notionPageId,
-          repoName,
-          pull_request.state
-        );
-        break;
-      case "edited":
-        result = await addMentionBlock(pull_request, notionPageId);
-        // Only update status if PR is not closed (merged)
-        if (pull_request.state !== "closed") {
+    notionPageIds.forEach(async (notionPageId) => {
+      switch (action) {
+        case "opened":
+          result = await addMentionBlock(pull_request, notionPageId);
           statusResult = await updatePageStatus(
             notionPageId,
             repoName,
             pull_request.state
           );
-        } else {
-          console.log(
-            "PR is closed - skipping status update for edited action"
+          break;
+        case "edited":
+          result = await addMentionBlock(pull_request, notionPageId);
+          // Only update status if PR is not closed (merged)
+          if (pull_request.state !== "closed") {
+            statusResult = await updatePageStatus(
+              notionPageId,
+              repoName,
+              pull_request.state
+            );
+          } else {
+            console.log(
+              "PR is closed - skipping status update for edited action"
+            );
+            statusResult = {
+              updated: false,
+              reason: "PR is closed, status update skipped",
+            };
+          }
+          break;
+        case "closed":
+          console.log("PR closed/merged - updating page status to Complete");
+          statusResult = await updatePageStatus(
+            notionPageId,
+            repoName,
+            pull_request.state
           );
-          statusResult = {
-            updated: false,
-            reason: "PR is closed, status update skipped",
-          };
-        }
-        break;
-      case "closed":
-        console.log("PR closed/merged - updating page status to Complete");
-        statusResult = await updatePageStatus(
-          notionPageId,
-          repoName,
-          pull_request.state
-        );
-        result = await addMentionBlock(pull_request, notionPageId);
-        break;
-      default:
-        console.log(`Ignoring PR action: ${action}`);
-        return res.status(200).json({
-          message: `Event ignored (action: ${action})`,
-          pr_number: pull_request.number,
-          action: action,
-        });
-    }
+          result = await addMentionBlock(pull_request, notionPageId);
+          break;
+        default:
+          console.log(`Ignoring PR action: ${action}`);
+          return res.status(200).json({
+            message: `Event ignored (action: ${action})`,
+            pr_number: pull_request.number,
+            action: action,
+          });
+      }
+    });
 
     const response = {
       message: `Successfully processed PR ${action} event`,
       pr_number: pull_request.number,
       action: action,
-      notion_page_id: notionPageId,
+      notion_page_ids: notionPageIds,
     };
 
     if (result.alreadyExists) {
