@@ -33,6 +33,8 @@ function extractNotionPageIds(prDescription) {
     /https:\/\/(?:www\.)?notion\.so\/([a-f0-9]{32})(?:[\s?#]|$)/gi,
     // URLs with query parameters: https://www.notion.so/workspace/page-title-pageId?param=value
     /https:\/\/(?:www\.)?notion\.so\/[^\/\s]+\/[^\/\s]+-([a-f0-9]{32})\?/gi,
+    // Workspace/pageId format (no hyphen): https://www.notion.so/workspace/pageId?param=value
+    /https:\/\/(?:www\.)?notion\.so\/[^\/\s]+\/([a-f0-9]{32})(?:[\s?#]|$)/gi,
     // Markdown link format: [text](https://www.notion.so/...)
     /\[[^\]]+\]\(https:\/\/(?:www\.)?notion\.so\/[^\/\s]+\/[^\/\s]+-([a-f0-9]{32})[^)]*\)/gi,
   ];
