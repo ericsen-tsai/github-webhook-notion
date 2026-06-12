@@ -19,6 +19,22 @@ const port = process.env.PORT || 8080;
 // Middleware
 app.use(express.json());
 
+function shouldMoveStatus(query) {
+  const value = query.move_status;
+  if (value === undefined) {
+    return true;
+  }
+  return value !== "false" && value !== "0";
+}
+
+async function maybeUpdatePageStatus(pageId, repoName, prState, moveStatus) {
+  if (!moveStatus) {
+    console.log("Status update skipped (move_status=false)");
+    return { updated: false, reason: "Status update disabled via query string" };
+  }
+  return updatePageStatus(pageId, repoName, prState);
+}
+
 // Function to extract Notion page ID from PR description
 function extractNotionPageIds(prDescription) {
   if (!prDescription) {
@@ -288,6 +304,7 @@ app.post("/webhook", async (req, res) => {
     const repoName = pull_request.url.includes("kids-reporter")
       ? "kids-reporter"
       : "twreporter";
+    const moveStatus = shouldMoveStatus(req.query);
 
     // Process all page IDs in parallel
     const processPagePromises = notionPageIds.map(async (notionPageId) => {
@@ -297,20 +314,22 @@ app.post("/webhook", async (req, res) => {
       switch (action) {
         case "opened":
           result = await addMentionBlock(pull_request, notionPageId);
-          statusResult = await updatePageStatus(
+          statusResult = await maybeUpdatePageStatus(
             notionPageId,
             repoName,
-            pull_request.state
+            pull_request.state,
+            moveStatus
           );
           break;
         case "edited":
           result = await addMentionBlock(pull_request, notionPageId);
           // Only update status if PR is not closed (merged)
           if (pull_request.state !== "closed") {
-            statusResult = await updatePageStatus(
+            statusResult = await maybeUpdatePageStatus(
               notionPageId,
               repoName,
-              pull_request.state
+              pull_request.state,
+              moveStatus
             );
           } else {
             console.log(
@@ -323,11 +342,14 @@ app.post("/webhook", async (req, res) => {
           }
           break;
         case "closed":
-          console.log("PR closed/merged - updating page status to Complete");
-          statusResult = await updatePageStatus(
+          if (moveStatus) {
+            console.log("PR closed/merged - updating page status to Complete");
+          }
+          statusResult = await maybeUpdatePageStatus(
             notionPageId,
             repoName,
-            pull_request.state
+            pull_request.state,
+            moveStatus
           );
           result = await addMentionBlock(pull_request, notionPageId);
           break;
@@ -349,6 +371,7 @@ app.post("/webhook", async (req, res) => {
       pr_number: pull_request.number,
       action: action,
       notion_page_ids: notionPageIds,
+      move_status: moveStatus,
     };
 
     if (result.alreadyExists) {
