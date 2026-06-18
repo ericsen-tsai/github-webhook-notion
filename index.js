@@ -46,8 +46,11 @@ function extractNotionPageIds(prDescription) {
     // app.notion.com URLs: https://app.notion.com/p/workspace/pageId
     // or https://app.notion.com/p/workspace/cache-pageId
     /https:\/\/app\.notion\.com\/p\/[^\/\s]+\/(?:cache-)?([a-f0-9]{32})(?:[\s?#]|$)/gi,
+    // app.notion.com URLs with title slug: https://app.notion.com/p/workspace/page-title-pageId
+    /https:\/\/app\.notion\.com\/p\/[^\/\s]+\/[^\/\s]+-([a-f0-9]{32})(?:[\s?#]|$)/gi,
     // Markdown link format: [text](https://app.notion.com/p/...)
     /\[[^\]]+\]\(https:\/\/app\.notion\.com\/p\/[^\/\s]+\/(?:cache-)?([a-f0-9]{32})[^)]*\)/gi,
+    /\[[^\]]+\]\(https:\/\/app\.notion\.com\/p\/[^\/\s]+\/[^\/\s]+-([a-f0-9]{32})[^)]*\)/gi,
     // Standard Notion URLs: https://www.notion.so/workspace/page-title-pageId
     /https:\/\/(?:www\.)?notion\.so\/[^\/\s]+\/[^\/\s]+-([a-f0-9]{32})/gi,
     // Direct page URLs: https://www.notion.so/pageId
